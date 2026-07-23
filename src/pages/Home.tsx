@@ -9,12 +9,15 @@ import { RouteSummary } from '../components/Route/RouteSummary';
 import { ElevationProfile } from '../components/Route/ElevationProfile';
 import { POIMarkers } from '../components/POI/POIMarkers';
 import { poiConfig } from '../components/POI/poiConfig';
+import { HazardMarkers } from '../components/Hazard/HazardMarkers';
+import { HazardReportButton } from '../components/Hazard/HazardReportButton';
 import { NavigationScreen } from '../components/Navigation/NavigationScreen';
 import { getCurrentPosition, useGeolocation } from '../hooks/useGeolocation';
 import { searchBikeRoute } from '../services/routeService';
-import { busanBikePOIs } from '../data/busanBikePOI';
+import { searchPOIByType } from '../services/kakaoPlaces';
+import { fetchHazards } from '../services/hazardApi';
 import { useNavigationStore, type NamedPoint } from '../stores/navigationStore';
-import type { PlaceResult, POIType } from '../types';
+import type { BikePOI, HazardReport, PlaceResult, POIType } from '../types';
 
 const BUSAN_CENTER = { lat: 35.1796, lng: 129.0756 };
 
@@ -42,6 +45,8 @@ export function Home() {
   const [map, setMap] = useState<any>(null);
   const [myPos, setMyPos] = useState<{ lat: number; lng: number } | null>(null);
   const [activePOI, setActivePOI] = useState<Set<POIType>>(new Set());
+  const [livePois, setLivePois] = useState<BikePOI[]>([]);
+  const [hazards, setHazards] = useState<HazardReport[]>([]);
 
   // 실시간 GPS 추적 (내 위치 점이 실제 이동을 따라 움직임)
   const { coords: liveCoords, startTracking } = useGeolocation();
@@ -71,6 +76,33 @@ export function Home() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveCoords, map]);
+
+  // 위험 신고 목록 불러오기 (R2 백엔드)
+  const loadHazards = useCallback(() => {
+    fetchHazards().then(setHazards).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadHazards();
+  }, [loadHazards]);
+
+  // 켜진 POI 종류를 카카오 검색으로 지도 중심 주변에서 실시간 조회
+  useEffect(() => {
+    if (!map || !window.kakao || activePOI.size === 0) {
+      setLivePois([]);
+      return;
+    }
+    const c = map.getCenter();
+    const center = { lat: c.getLat(), lng: c.getLng() };
+    let cancelled = false;
+    Promise.all([...activePOI].map((t) => searchPOIByType(t, center)))
+      .then((lists) => {
+        if (!cancelled) setLivePois(lists.flat());
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activePOI, map]);
 
   // 출발지·도착지가 모두 정해지면 자동으로 경로 탐색
   useEffect(() => {
@@ -144,10 +176,12 @@ export function Home() {
         <KakaoMap center={BUSAN_CENTER} level={6} onMapReady={setMap} />
         {map && myPos && <CurrentLocationMarker map={map} position={myPos} accuracy={0} />}
         {map && showRoute && route && <RoutePolyline map={map} path={route.path} />}
-        {map && (
-          <POIMarkers map={map} pois={busanBikePOIs} activeTypes={activePOI} />
-        )}
+        {map && <POIMarkers map={map} pois={livePois} activeTypes={activePOI} />}
+        {map && <HazardMarkers map={map} hazards={hazards} />}
       </div>
+
+      {/* 위험 신고 버튼 (좌측 하단) */}
+      <HazardReportButton myPos={myPos} onReported={loadHazards} />
 
       {/* 상단 검색 패널 */}
       <div className="absolute inset-x-0 top-0 z-20 p-3 pt-safe">
