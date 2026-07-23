@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Search, MapPin, X } from 'lucide-react';
+import { Search, MapPin, Mic, X } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
+import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 import type { PlaceResult } from '../../types';
 
 interface Props {
@@ -25,6 +26,18 @@ export function PlaceSearch({ placeholder, value, onSelect, bias }: Props) {
   useEffect(() => {
     setQuery(value ?? '');
   }, [value]);
+
+  // 음성으로 검색: 말한 내용을 검색어로 넣으면 아래 후보가 자동으로 뜸
+  const {
+    supported: micSupported,
+    listening,
+    start: startVoice,
+    stop: stopVoice,
+  } = useSpeechRecognition((text) => {
+    setQuery(text);
+    setOpen(true);
+    inputRef.current?.focus();
+  });
 
   useEffect(() => {
     const keyword = debounced.trim();
@@ -64,25 +77,41 @@ export function PlaceSearch({ placeholder, value, onSelect, bias }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => results.length > 0 && setOpen(true)}
-          placeholder={placeholder}
-          className="w-full rounded-2xl border border-white/10 bg-surface py-3.5 pl-12 pr-10
+          placeholder={listening ? '듣고 있어요… 말씀하세요' : placeholder}
+          className="w-full rounded-2xl border border-white/10 bg-surface py-3.5 pl-12 pr-20
                      text-text-primary placeholder:text-text-muted
                      transition-all focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
         />
-        {query && (
-          <button
-            type="button"
-            onClick={() => {
-              setQuery('');
-              setResults([]);
-              inputRef.current?.focus();
-            }}
-            className="absolute right-3 p-1"
-            aria-label="지우기"
-          >
-            <X className="h-5 w-5 text-text-muted" />
-          </button>
-        )}
+        {/* 오른쪽 버튼들: 지우기 + 음성검색 */}
+        <div className="absolute right-2 flex items-center gap-0.5">
+          {query && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery('');
+                setResults([]);
+                inputRef.current?.focus();
+              }}
+              className="p-1.5"
+              aria-label="지우기"
+            >
+              <X className="h-5 w-5 text-text-muted" />
+            </button>
+          )}
+          {micSupported && (
+            <button
+              type="button"
+              onClick={() => (listening ? stopVoice() : startVoice())}
+              className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
+                listening ? 'bg-danger/20' : 'hover:bg-white/5'
+              }`}
+              aria-label="음성으로 검색"
+              title="음성으로 검색"
+            >
+              <Mic className={`h-5 w-5 ${listening ? 'animate-pulse text-danger' : 'text-primary'}`} />
+            </button>
+          )}
+        </div>
       </div>
 
       {open && results.length > 0 && (
