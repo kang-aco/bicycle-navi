@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Crosshair, LocateFixed, Menu, Navigation2 } from 'lucide-react';
+import { Crosshair, Gauge, LocateFixed, Menu, RotateCcw } from 'lucide-react';
 import { KakaoMap } from '../components/Map/KakaoMap';
 import { CurrentLocationMarker } from '../components/Map/CurrentLocationMarker';
 import { RoutePolyline } from '../components/Map/RoutePolyline';
@@ -16,6 +16,8 @@ import { getCurrentPosition, useGeolocation } from '../hooks/useGeolocation';
 import { searchBikeRoute } from '../services/routeService';
 import { searchPOIByType } from '../services/kakaoPlaces';
 import { fetchHazards } from '../services/hazardApi';
+import { distanceMeters } from '../services/geo';
+import { formatDistance } from '../utils/format';
 import { useNavigationStore, type NamedPoint } from '../stores/navigationStore';
 import type { BikePOI, HazardReport, PlaceResult, POIType } from '../types';
 
@@ -49,9 +51,20 @@ export function Home() {
   const [hazards, setHazards] = useState<HazardReport[]>([]);
 
   // 실시간 GPS 추적 (내 위치 점이 실제 이동을 따라 움직임)
-  const { coords: liveCoords, startTracking } = useGeolocation();
+  const { coords: liveCoords, speed, startTracking } = useGeolocation();
   const centeredOnceRef = useRef(false);
   const autoOriginSetRef = useRef(false);
+
+  // 주행 대시보드용 (속도 + 이번 라이딩 거리)
+  const lastPosRef = useRef<{ lat: number; lng: number } | null>(null);
+  const lastTimeRef = useRef<number>(0);
+  const [sessionDistance, setSessionDistance] = useState(0);
+  const [speedKmh, setSpeedKmh] = useState(0);
+  const resetSession = useCallback(() => {
+    setSessionDistance(0);
+    lastPosRef.current = null;
+    lastTimeRef.current = 0;
+  }, []);
 
   useEffect(() => {
     startTracking();
@@ -61,6 +74,27 @@ export function Home() {
   useEffect(() => {
     if (!liveCoords) return;
     setMyPos(liveCoords);
+
+    // === 속도 & 주행거리 계산 ===
+    const now = Date.now();
+    let segSpeedKmh: number | null = null;
+    if (lastPosRef.current && lastTimeRef.current) {
+      const d = distanceMeters(lastPosRef.current, liveCoords); // 이동 거리(m)
+      const dt = (now - lastTimeRef.current) / 1000; // 경과(초)
+      // GPS 튐 방지: 4m~200m 사이 움직임만 인정
+      if (d > 4 && d < 200 && dt > 0) {
+        setSessionDistance((prev) => prev + d);
+        segSpeedKmh = (d / dt) * 3.6;
+      } else if (d <= 4) {
+        segSpeedKmh = 0; // 멈춰 있음
+      }
+    }
+    lastPosRef.current = liveCoords;
+    lastTimeRef.current = now;
+    // 기기가 speed를 주면 그 값을, 아니면 좌표로 계산한 값을 사용
+    const hookKmh = speed != null && speed >= 0 ? speed * 3.6 : null;
+    const finalSpeed = hookKmh ?? segSpeedKmh;
+    if (finalSpeed != null) setSpeedKmh(Math.max(0, finalSpeed));
 
     // 최초 1회만 지도를 내 위치로 이동 (이후엔 사용자가 지도를 자유롭게 움직일 수 있게)
     if (!centeredOnceRef.current && map && window.kakao) {
@@ -288,11 +322,34 @@ export function Home() {
             </>
           )}
 
+          {/* 주행 대시보드: 속도 + 이번 라이딩 거리 (목적지 없이 그냥 탈 때도 표시) */}
           {phase === 'idle' && !isLoadingRoute && (
-            <div className="glass flex items-center gap-3 rounded-3xl p-4">
-              <Navigation2 className="h-5 w-5 text-primary" />
-              <p className="text-sm text-text-secondary">
-                출발지와 도착지를 입력하면 자전거 경로를 안내해 드립니다.
+            <div className="glass rounded-3xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-end gap-1">
+                  <Gauge className="mb-1.5 h-5 w-5 text-primary" />
+                  <span className="font-mono text-5xl font-bold text-primary">
+                    {Math.round(speedKmh)}
+                  </span>
+                  <span className="mb-1.5 text-sm text-text-secondary">km/h</span>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-text-muted">주행 거리</p>
+                  <p className="font-mono text-2xl font-bold text-text-primary">
+                    {formatDistance(sessionDistance)}
+                  </p>
+                </div>
+                <button
+                  onClick={resetSession}
+                  className="ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-surface"
+                  aria-label="주행거리 초기화"
+                  title="주행거리 초기화"
+                >
+                  <RotateCcw className="h-4 w-4 text-text-secondary" />
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-text-muted">
+                출발지·도착지를 입력하면 경로 안내가 시작됩니다.
               </p>
             </div>
           )}
