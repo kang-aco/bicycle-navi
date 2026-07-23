@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Crosshair, LocateFixed, Menu, Navigation2 } from 'lucide-react';
 import { KakaoMap } from '../components/Map/KakaoMap';
@@ -10,7 +10,7 @@ import { ElevationProfile } from '../components/Route/ElevationProfile';
 import { POIMarkers } from '../components/POI/POIMarkers';
 import { poiConfig } from '../components/POI/poiConfig';
 import { NavigationScreen } from '../components/Navigation/NavigationScreen';
-import { getCurrentPosition } from '../hooks/useGeolocation';
+import { getCurrentPosition, useGeolocation } from '../hooks/useGeolocation';
 import { searchBikeRoute } from '../services/routeService';
 import { busanBikePOIs } from '../data/busanBikePOI';
 import { useNavigationStore, type NamedPoint } from '../stores/navigationStore';
@@ -43,18 +43,34 @@ export function Home() {
   const [myPos, setMyPos] = useState<{ lat: number; lng: number } | null>(null);
   const [activePOI, setActivePOI] = useState<Set<POIType>>(new Set());
 
-  // 시작 시 현재 위치 한 번 가져와서 지도 중심 이동
+  // 실시간 GPS 추적 (내 위치 점이 실제 이동을 따라 움직임)
+  const { coords: liveCoords, startTracking } = useGeolocation();
+  const centeredOnceRef = useRef(false);
+  const autoOriginSetRef = useRef(false);
+
   useEffect(() => {
-    getCurrentPosition()
-      .then((pos) => {
-        const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setMyPos(c);
-        if (map && window.kakao) map.setCenter(new window.kakao.maps.LatLng(c.lat, c.lng));
-      })
-      .catch(() => {
-        /* 권한 거부 시 부산 시청 기준 유지 */
-      });
-  }, [map]);
+    startTracking();
+  }, [startTracking]);
+
+  // 실시간 위치 갱신 시: 내 위치 갱신 + 첫 위치는 지도 중심 이동 + 출발지 자동 지정
+  useEffect(() => {
+    if (!liveCoords) return;
+    setMyPos(liveCoords);
+
+    // 최초 1회만 지도를 내 위치로 이동 (이후엔 사용자가 지도를 자유롭게 움직일 수 있게)
+    if (!centeredOnceRef.current && map && window.kakao) {
+      map.setCenter(new window.kakao.maps.LatLng(liveCoords.lat, liveCoords.lng));
+      map.setLevel(4);
+      centeredOnceRef.current = true;
+    }
+
+    // 앱을 처음 열었을 때 출발지를 '현재 위치'로 자동 지정 (아직 아무것도 안 정했을 때만)
+    if (!autoOriginSetRef.current && !origin && phase === 'idle') {
+      setOrigin({ ...liveCoords, name: '현재 위치' });
+      autoOriginSetRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveCoords, map]);
 
   // 출발지·도착지가 모두 정해지면 자동으로 경로 탐색
   useEffect(() => {
@@ -82,6 +98,12 @@ export function Home() {
   }, [origin, destination, setLoadingRoute, setRouteError, setPhase, setRoute]);
 
   const useMyLocationAsOrigin = useCallback(async () => {
+    // 이미 실시간 위치가 있으면 즉시 사용 (기다릴 필요 없음)
+    if (liveCoords) {
+      setOrigin({ ...liveCoords, name: '현재 위치' });
+      if (map && window.kakao) map.setCenter(new window.kakao.maps.LatLng(liveCoords.lat, liveCoords.lng));
+      return;
+    }
     try {
       const pos = await getCurrentPosition();
       const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -90,7 +112,7 @@ export function Home() {
     } catch {
       setRouteError('현재 위치를 가져올 수 없습니다. 위치 권한을 확인해주세요.');
     }
-  }, [setOrigin, setRouteError]);
+  }, [liveCoords, map, setOrigin, setRouteError]);
 
   const recenter = useCallback(() => {
     if (myPos && map && window.kakao) {
@@ -130,6 +152,7 @@ export function Home() {
       {/* 상단 검색 패널 */}
       <div className="absolute inset-x-0 top-0 z-20 p-3 pt-safe">
         <div className="mx-auto max-w-lg space-y-2">
+          {/* 출발지 줄 (오른쪽 버튼으로 현재 위치를 실시간으로 잡음) */}
           <div className="flex items-center gap-2">
             <Link
               to="/settings"
@@ -140,22 +163,26 @@ export function Home() {
             </Link>
             <div className="flex-1">
               <PlaceSearch
-                placeholder="출발지 검색"
+                placeholder="출발지 (내 위치 자동)"
                 value={origin?.name}
-                bias={BUSAN_CENTER}
+                bias={myPos ?? BUSAN_CENTER}
                 onSelect={(p) => setOrigin(placeToPoint(p))}
               />
             </div>
-          </div>
-          <div className="flex items-center gap-2">
             <button
               onClick={useMyLocationAsOrigin}
               className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
               aria-label="현재 위치를 출발지로"
-              title="현재 위치를 출발지로"
+              title="현재 위치를 출발지로 잡기"
             >
-              <LocateFixed className="h-5 w-5 text-secondary" />
+              <LocateFixed
+                className={`h-5 w-5 ${origin?.name === '현재 위치' ? 'text-primary' : 'text-secondary'}`}
+              />
             </button>
+          </div>
+          {/* 도착지 줄 */}
+          <div className="flex items-center gap-2">
+            <span className="h-11 w-11 shrink-0" aria-hidden />
             <div className="flex-1">
               <PlaceSearch
                 placeholder="도착지 검색"
@@ -164,6 +191,7 @@ export function Home() {
                 onSelect={(p) => setDestination(placeToPoint(p))}
               />
             </div>
+            <span className="h-11 w-11 shrink-0" aria-hidden />
           </div>
 
           {routeError && (

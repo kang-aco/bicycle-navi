@@ -14,9 +14,12 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // 설치형 앱에서 /history, /settings 같은 주소도 새로고침 시 index.html로 처리
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
         // 지도 타일/고도 데이터를 캐싱해서 오프라인 대응 + 속도 향상
         runtimeCaching: [
           {

@@ -1,4 +1,3 @@
 # SPA 라우팅: /history, /settings 같은 주소로 새로고침해도 index.html을 보여줌
-# (단, /api/* 는 Pages Functions로 넘어가야 하므로 제외)
-/api/*  /api/:splat  200
-/*      /index.html  200
+# (/api/* 는 Pages Functions가 자동 처리하므로 여기서 다룰 필요 없음)
+/*  /index.html  200
