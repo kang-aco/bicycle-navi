@@ -1,0 +1,241 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Crosshair, LocateFixed, Menu, Navigation2 } from 'lucide-react';
+import { KakaoMap } from '../components/Map/KakaoMap';
+import { CurrentLocationMarker } from '../components/Map/CurrentLocationMarker';
+import { RoutePolyline } from '../components/Map/RoutePolyline';
+import { PlaceSearch } from '../components/Search/PlaceSearch';
+import { RouteSummary } from '../components/Route/RouteSummary';
+import { ElevationProfile } from '../components/Route/ElevationProfile';
+import { POIMarkers } from '../components/POI/POIMarkers';
+import { poiConfig } from '../components/POI/poiConfig';
+import { NavigationScreen } from '../components/Navigation/NavigationScreen';
+import { getCurrentPosition } from '../hooks/useGeolocation';
+import { searchBikeRoute } from '../services/routeService';
+import { busanBikePOIs } from '../data/busanBikePOI';
+import { useNavigationStore, type NamedPoint } from '../stores/navigationStore';
+import type { PlaceResult, POIType } from '../types';
+
+const BUSAN_CENTER = { lat: 35.1796, lng: 129.0756 };
+
+function placeToPoint(p: PlaceResult): NamedPoint {
+  return { lat: Number(p.y), lng: Number(p.x), name: p.place_name };
+}
+
+export function Home() {
+  const {
+    origin,
+    destination,
+    route,
+    phase,
+    isLoadingRoute,
+    routeError,
+    setOrigin,
+    setDestination,
+    setRoute,
+    setPhase,
+    setLoadingRoute,
+    setRouteError,
+    reset,
+  } = useNavigationStore();
+
+  const [map, setMap] = useState<any>(null);
+  const [myPos, setMyPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [activePOI, setActivePOI] = useState<Set<POIType>>(new Set());
+
+  // 시작 시 현재 위치 한 번 가져와서 지도 중심 이동
+  useEffect(() => {
+    getCurrentPosition()
+      .then((pos) => {
+        const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setMyPos(c);
+        if (map && window.kakao) map.setCenter(new window.kakao.maps.LatLng(c.lat, c.lng));
+      })
+      .catch(() => {
+        /* 권한 거부 시 부산 시청 기준 유지 */
+      });
+  }, [map]);
+
+  // 출발지·도착지가 모두 정해지면 자동으로 경로 탐색
+  useEffect(() => {
+    if (origin && destination && phase !== 'navigating') {
+      void runSearch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [origin, destination]);
+
+  const runSearch = useCallback(async () => {
+    if (!origin || !destination) return;
+    setLoadingRoute(true);
+    setRouteError(null);
+    setPhase('routing');
+    try {
+      const r = await searchBikeRoute(origin, destination);
+      setRoute(r);
+      setPhase('preview');
+    } catch (e) {
+      setRouteError('경로를 찾지 못했습니다. 잠시 후 다시 시도해주세요.');
+      setPhase('idle');
+    } finally {
+      setLoadingRoute(false);
+    }
+  }, [origin, destination, setLoadingRoute, setRouteError, setPhase, setRoute]);
+
+  const useMyLocationAsOrigin = useCallback(async () => {
+    try {
+      const pos = await getCurrentPosition();
+      const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      setMyPos(c);
+      setOrigin({ ...c, name: '현재 위치' });
+    } catch {
+      setRouteError('현재 위치를 가져올 수 없습니다. 위치 권한을 확인해주세요.');
+    }
+  }, [setOrigin, setRouteError]);
+
+  const recenter = useCallback(() => {
+    if (myPos && map && window.kakao) {
+      map.setCenter(new window.kakao.maps.LatLng(myPos.lat, myPos.lng));
+      map.setLevel(4);
+    }
+  }, [map, myPos]);
+
+  const togglePOI = (t: POIType) => {
+    setActivePOI((prev) => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
+  };
+
+  const showRoute = (phase === 'preview' || phase === 'routing') && route;
+  const poiTypes = useMemo(() => Object.keys(poiConfig) as POIType[], []);
+
+  // 네비게이션 화면 (전체 화면 오버레이)
+  if (phase === 'navigating') {
+    return <NavigationScreen onExit={() => reset()} />;
+  }
+
+  return (
+    <div className="relative h-full w-full overflow-hidden">
+      {/* 지도 */}
+      <div className="absolute inset-0">
+        <KakaoMap center={BUSAN_CENTER} level={6} onMapReady={setMap} />
+        {map && myPos && <CurrentLocationMarker map={map} position={myPos} accuracy={0} />}
+        {map && showRoute && route && <RoutePolyline map={map} path={route.path} />}
+        {map && (
+          <POIMarkers map={map} pois={busanBikePOIs} activeTypes={activePOI} />
+        )}
+      </div>
+
+      {/* 상단 검색 패널 */}
+      <div className="absolute inset-x-0 top-0 z-20 p-3 pt-safe">
+        <div className="mx-auto max-w-lg space-y-2">
+          <div className="flex items-center gap-2">
+            <Link
+              to="/settings"
+              className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+              aria-label="메뉴"
+            >
+              <Menu className="h-5 w-5 text-text-primary" />
+            </Link>
+            <div className="flex-1">
+              <PlaceSearch
+                placeholder="출발지 검색"
+                value={origin?.name}
+                bias={BUSAN_CENTER}
+                onSelect={(p) => setOrigin(placeToPoint(p))}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={useMyLocationAsOrigin}
+              className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+              aria-label="현재 위치를 출발지로"
+              title="현재 위치를 출발지로"
+            >
+              <LocateFixed className="h-5 w-5 text-secondary" />
+            </button>
+            <div className="flex-1">
+              <PlaceSearch
+                placeholder="도착지 검색"
+                value={destination?.name}
+                bias={myPos ?? BUSAN_CENTER}
+                onSelect={(p) => setDestination(placeToPoint(p))}
+              />
+            </div>
+          </div>
+
+          {routeError && (
+            <div className="rounded-2xl bg-danger/15 px-4 py-2 text-sm text-danger">{routeError}</div>
+          )}
+        </div>
+      </div>
+
+      {/* POI 필터 칩 */}
+      <div className="absolute inset-x-0 z-10 flex gap-2 overflow-x-auto px-3 pb-1"
+           style={{ top: '148px' }}>
+        {poiTypes.map((t) => {
+          const cfg = poiConfig[t];
+          const on = activePOI.has(t);
+          return (
+            <button
+              key={t}
+              onClick={() => togglePOI(t)}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                on
+                  ? 'border-transparent text-white'
+                  : 'border-white/10 bg-surface/80 text-text-secondary backdrop-blur'
+              }`}
+              style={on ? { backgroundColor: cfg.color } : undefined}
+            >
+              {cfg.emoji} {cfg.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 현재위치 버튼 */}
+      <button
+        onClick={recenter}
+        className="glass absolute right-4 z-10 flex h-12 w-12 items-center justify-center rounded-full"
+        style={{ bottom: showRoute ? '320px' : '110px' }}
+        aria-label="현재 위치로"
+      >
+        <Crosshair className="h-5 w-5 text-primary" />
+      </button>
+
+      {/* 하단 바텀시트 */}
+      <div className="absolute inset-x-0 bottom-0 z-20 p-3 pb-safe">
+        <div className="mx-auto max-w-lg space-y-3">
+          {isLoadingRoute && (
+            <div className="glass flex items-center justify-center gap-3 rounded-3xl p-5">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span className="text-text-secondary">자전거 경로를 찾는 중…</span>
+            </div>
+          )}
+
+          {showRoute && route && !isLoadingRoute && (
+            <>
+              <ElevationProfile path={route.path} />
+              <RouteSummary
+                route={route}
+                onStart={() => setPhase('navigating')}
+                onCancel={() => reset()}
+              />
+            </>
+          )}
+
+          {phase === 'idle' && !isLoadingRoute && (
+            <div className="glass flex items-center gap-3 rounded-3xl p-4">
+              <Navigation2 className="h-5 w-5 text-primary" />
+              <p className="text-sm text-text-secondary">
+                출발지와 도착지를 입력하면 자전거 경로를 안내해 드립니다.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,13 @@
+# Cloudflare Pages 설정
+name = "busan-cyclenav"
+compatibility_date = "2026-07-23"
+
+# 빌드 결과물 폴더 (Vite가 dist에 만듭니다)
+pages_build_output_dir = "dist"
+
+# ── R2 버킷을 "데이터베이스"로 연결 ──
+# 아래 bucket_name 의 버킷을 Cloudflare 대시보드에서 먼저 만들어야 합니다.
+# functions/ 안의 코드에서는 env.DB 로 접근합니다.
+[[r2_buckets]]
+binding = "DB"
+bucket_name = "busan-cyclenav-data"
